@@ -5,10 +5,11 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.util.ArrayList;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 
 public class PeopleMenu extends JFrame {
-    // 1. Komponen GUI (Nama harus sesuai dengan 'field name' di PeopleMenu.form)
+    // 1. Komponen GUI (Harus sesuai dengan 'field name' di PeopleMenu.form)
     private JPanel mainPanel;
     private JLabel titleLabel;
     private JTextField idField;
@@ -23,25 +24,22 @@ public class PeopleMenu extends JFrame {
     private JTable peopleTable;
     private JScrollPane scrollPane;
 
-    // 2. Variabel Logika Data
+    // 2. Variabel Logika & Database (Tanpa ArrayList)
     private ButtonGroup genderGroup;
-    private ArrayList<Person> listPerson;
+    private Database database;
     private int selectedIndex = -1;
 
     // Constructor
     public PeopleMenu() {
-        // Inisialisasi List Data
-        listPerson = new ArrayList<>();
+        // Inisialisasi Koneksi Database
+        database = new Database();
 
         // Kelompokkan Radio Button Jenis Kelamin
         genderGroup = new ButtonGroup();
         genderGroup.add(lakiRadioButton);
         genderGroup.add(perempuanRadioButton);
 
-        // Isi Data Dummy Awal
-        populateList();
-
-        // Set Model Tabel
+        // Set Model Tabel dari Database
         peopleTable.setModel(setTable());
 
         // Styling Title Label
@@ -71,9 +69,11 @@ public class PeopleMenu extends JFrame {
             @Override
             public void actionPerformed(ActionEvent e) {
                 if (selectedIndex >= 0) {
+                    String selectedNama = peopleTable.getModel().getValueAt(selectedIndex, 2).toString();
+
                     int confirm = JOptionPane.showConfirmDialog(
                             null,
-                            "Apakah Anda yakin ingin menghapus data '" + listPerson.get(selectedIndex).getNama() + "'?",
+                            "Apakah Anda yakin ingin menghapus data '" + selectedNama + "'?",
                             "Konfirmasi Hapus Data",
                             JOptionPane.YES_NO_OPTION,
                             JOptionPane.QUESTION_MESSAGE
@@ -94,7 +94,7 @@ public class PeopleMenu extends JFrame {
             }
         });
 
-        // Listener Klik Baris Tabel
+        // Listener Klik Baris Tabel (Membaca langsung dari Model Tabel tanpa ArrayList)
         peopleTable.addMouseListener(new MouseAdapter() {
             @Override
             public void mousePressed(MouseEvent e) {
@@ -107,6 +107,8 @@ public class PeopleMenu extends JFrame {
                 String curGender = peopleTable.getModel().getValueAt(selectedIndex, 5).toString();
 
                 idField.setText(curId);
+                // Field ID di-disable saat mode Update agar Primary Key tidak diubah
+                idField.setEnabled(false);
                 namaField.setText(curNama);
                 tahunLahirField.setText(curTahun);
                 kategoriComboBox.setSelectedItem(curKategori);
@@ -123,83 +125,87 @@ public class PeopleMenu extends JFrame {
         });
     }
 
-    // Mengisi Data Dummy
-    private void populateList() {
-        listPerson.add(new Person("EMP001", "Budi Santoso", 1992, "Full-time", "Laki-laki"));
-        listPerson.add(new Person("EMP002", "Siti Aminah", 1997, "Full-time", "Perempuan"));
-        listPerson.add(new Person("EMP003", "Rian Pratama", 1995, "Contract", "Laki-laki"));
-        listPerson.add(new Person("EMP004", "Dewi Lestari", 1998, "Part-time", "Perempuan"));
-        listPerson.add(new Person("EMP005", "Ahmad Fauzi", 2001, "Internship", "Laki-laki"));
-    }
-
-    // Mengatur Model Tabel
+    // Read: Mengambil Data dari MySQL dan Menampilkannya di JTable
     public final DefaultTableModel setTable() {
         Object[] cols = {"No", "ID", "Nama", "Tahun Lahir", "Kategori", "Jenis Kelamin"};
         DefaultTableModel tmp = new DefaultTableModel(null, cols);
 
-        for (int i = 0; i < listPerson.size(); i++) {
-            Object[] row = {
-                    (i + 1),
-                    listPerson.get(i).getId(),
-                    listPerson.get(i).getNama(),
-                    listPerson.get(i).getTahunLahir(),
-                    listPerson.get(i).getKategori(),
-                    listPerson.get(i).getJenisKelamin()
-            };
-            tmp.addRow(row);
+        try {
+            ResultSet resultSet = database.selectQuery("SELECT * FROM person");
+            int no = 1;
+            while (resultSet.next()) {
+                Object[] row = {
+                        no++,
+                        resultSet.getString("id"),
+                        resultSet.getString("nama"),
+                        resultSet.getInt("thn_lahir"),
+                        resultSet.getString("kategori"),
+                        resultSet.getString("jenis_kelamin")
+                };
+                tmp.addRow(row);
+            }
+        } catch (SQLException e) {
+            JOptionPane.showMessageDialog(null, "Gagal mengambil data: " + e.getMessage(), "Error Database", JOptionPane.ERROR_MESSAGE);
         }
+
         return tmp;
     }
 
-    // Tambah Data Baru
+    // Create: Tambah Data Baru ke MySQL
     public void insertData() {
         try {
             String id = idField.getText().trim();
             String nama = namaField.getText().trim();
             String tahunStr = tahunLahirField.getText().trim();
-            String kategori = kategoriComboBox.getSelectedItem().toString();
-
-            if (id.isEmpty() || nama.isEmpty() || tahunStr.isEmpty() || kategoriComboBox.getSelectedIndex() == 0) {
-                JOptionPane.showMessageDialog(null, "Semua field harus diisi!", "Error Input", JOptionPane.ERROR_MESSAGE);
-                return;
-            }
-
-            int tahunLahir = Integer.parseInt(tahunStr);
+            String kategori = kategoriComboBox.getSelectedIndex() > 0 ? kategoriComboBox.getSelectedItem().toString() : "";
 
             String gender = "";
             if (lakiRadioButton.isSelected()) {
                 gender = "Laki-laki";
             } else if (perempuanRadioButton.isSelected()) {
                 gender = "Perempuan";
-            } else {
-                JOptionPane.showMessageDialog(null, "Pilih jenis kelamin!", "Error Input", JOptionPane.ERROR_MESSAGE);
+            }
+
+            // Validasi 1: Kolom Input Kosong
+            if (id.isEmpty() || nama.isEmpty() || tahunStr.isEmpty() || kategori.isEmpty() || gender.isEmpty()) {
+                JOptionPane.showMessageDialog(null, "Semua field input harus diisi!", "Error Input", JOptionPane.ERROR_MESSAGE);
                 return;
             }
 
-            listPerson.add(new Person(id, nama, tahunLahir, kategori, gender));
+            // Validasi Format Angka Tahun
+            int tahunLahir = Integer.parseInt(tahunStr);
+
+            // Validasi 2: Cek Duplicate ID di Database
+            ResultSet checkRs = database.selectQuery("SELECT * FROM person WHERE id = '" + id + "'");
+            if (checkRs.next()) {
+                JOptionPane.showMessageDialog(null, "ID '" + id + "' sudah terdaftar! Gunakan ID lain.", "Duplicate ID Error", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+
+            // Eksekusi INSERT ke MySQL
+            String sqlQuery = "INSERT INTO person (id, nama, thn_lahir, kategori, jenis_kelamin) VALUES ('"
+                    + id + "', '" + nama + "', " + tahunLahir + ", '" + kategori + "', '" + gender + "')";
+            database.insertUpdateDeleteQuery(sqlQuery);
+
+            // Refresh Tabel & Reset Form
             peopleTable.setModel(setTable());
             clearForm();
 
             JOptionPane.showMessageDialog(null, "Data berhasil ditambahkan!");
         } catch (NumberFormatException ex) {
             JOptionPane.showMessageDialog(null, "Tahun lahir harus berupa angka!", "Error Format", JOptionPane.ERROR_MESSAGE);
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(null, "Error Database: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
-    // Ubah Data
+    // Update: Ubah Data di MySQL
     public void updateData() {
         try {
             String id = idField.getText().trim();
             String nama = namaField.getText().trim();
             String tahunStr = tahunLahirField.getText().trim();
-            String kategori = kategoriComboBox.getSelectedItem().toString();
-
-            if (id.isEmpty() || nama.isEmpty() || tahunStr.isEmpty() || kategoriComboBox.getSelectedIndex() == 0) {
-                JOptionPane.showMessageDialog(null, "Semua field harus diisi!", "Error Input", JOptionPane.ERROR_MESSAGE);
-                return;
-            }
-
-            int tahunLahir = Integer.parseInt(tahunStr);
+            String kategori = kategoriComboBox.getSelectedIndex() > 0 ? kategoriComboBox.getSelectedItem().toString() : "";
 
             String gender = "";
             if (lakiRadioButton.isSelected()) {
@@ -208,12 +214,20 @@ public class PeopleMenu extends JFrame {
                 gender = "Perempuan";
             }
 
-            listPerson.get(selectedIndex).setId(id);
-            listPerson.get(selectedIndex).setNama(nama);
-            listPerson.get(selectedIndex).setTahunLahir(tahunLahir);
-            listPerson.get(selectedIndex).setKategori(kategori);
-            listPerson.get(selectedIndex).setJenisKelamin(gender);
+            // Validasi Kolom Input Kosong
+            if (id.isEmpty() || nama.isEmpty() || tahunStr.isEmpty() || kategori.isEmpty() || gender.isEmpty()) {
+                JOptionPane.showMessageDialog(null, "Semua field input harus diisi!", "Error Input", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
 
+            int tahunLahir = Integer.parseInt(tahunStr);
+
+            // Eksekusi UPDATE ke MySQL
+            String sqlQuery = "UPDATE person SET nama = '" + nama + "', thn_lahir = " + tahunLahir
+                    + ", kategori = '" + kategori + "', jenis_kelamin = '" + gender + "' WHERE id = '" + id + "'";
+            database.insertUpdateDeleteQuery(sqlQuery);
+
+            // Refresh Tabel & Reset Form
             peopleTable.setModel(setTable());
             clearForm();
 
@@ -223,17 +237,25 @@ public class PeopleMenu extends JFrame {
         }
     }
 
-    // Hapus Data
+    // Delete: Hapus Data dari MySQL
     public void deleteData() {
-        listPerson.remove(selectedIndex);
+        String id = peopleTable.getModel().getValueAt(selectedIndex, 1).toString();
+
+        // Eksekusi DELETE dari MySQL
+        String sqlQuery = "DELETE FROM person WHERE id = '" + id + "'";
+        database.insertUpdateDeleteQuery(sqlQuery);
+
+        // Refresh Tabel & Reset Form
         peopleTable.setModel(setTable());
         clearForm();
+
         JOptionPane.showMessageDialog(null, "Data berhasil dihapus!");
     }
 
     // Bersihkan Form
     public void clearForm() {
         idField.setText("");
+        idField.setEnabled(true); // Aktifkan kembali input ID untuk mode Insert
         namaField.setText("");
         tahunLahirField.setText("");
         kategoriComboBox.setSelectedIndex(0);
@@ -247,7 +269,7 @@ public class PeopleMenu extends JFrame {
     // Main Method
     public static void main(String[] args) {
         PeopleMenu menu = new PeopleMenu();
-        menu.setTitle("Data Karyawan / Person");
+        menu.setTitle("Data Karyawan / Person (TP5 MySQL Persistence)");
         menu.setSize(750, 600);
         menu.setLocationRelativeTo(null);
         menu.setContentPane(menu.mainPanel);
@@ -333,5 +355,4 @@ public class PeopleMenu extends JFrame {
     public JComponent $$$getRootComponent$$$() {
         return mainPanel;
     }
-
-} // Kurung kurawal penutup class PeopleMenu
+}
